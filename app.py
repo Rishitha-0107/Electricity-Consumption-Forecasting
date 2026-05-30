@@ -1,14 +1,20 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-import pandas as pd
 import joblib
 import os
 import matplotlib.pyplot as plt
 
-# ==========================================
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import (
+    SimpleRNN,
+    Dropout,
+    Dense
+)
+
+# =====================================
 # PAGE CONFIG
-# ==========================================
+# =====================================
 
 st.set_page_config(
     page_title="Electricity Consumption Forecasting",
@@ -16,38 +22,52 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==========================================
-# CUSTOM CSS
-# ==========================================
-
-st.markdown("""
-<style>
-.metric-card{
-    background:#f8fafc;
-    padding:15px;
-    border-radius:12px;
-    border:1px solid #e5e7eb;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# LOAD MODEL
-# ==========================================
+# =====================================
+# BASE DIR
+# =====================================
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
 
-@st.cache_resource
-def load_artifacts():
+# =====================================
+# REBUILD MODEL
+# =====================================
 
-    model = tf.keras.models.load_model(
+@st.cache_resource
+def load_model():
+
+    model = Sequential()
+
+    model.add(
+        SimpleRNN(
+            64,
+            return_sequences=True,
+            input_shape=(24,1)
+        )
+    )
+
+    model.add(
+        Dropout(0.2)
+    )
+
+    model.add(
+        SimpleRNN(32)
+    )
+
+    model.add(
+        Dropout(0.2)
+    )
+
+    model.add(
+        Dense(1)
+    )
+
+    model.load_weights(
         os.path.join(
             BASE_DIR,
-            "energy_rnn_model.keras"
-        ),
-        compile=False
+            "energy_weights.weights.h5"
+        )
     )
 
     scaler = joblib.load(
@@ -59,346 +79,182 @@ def load_artifacts():
 
     return model, scaler
 
-try:
+model, scaler = load_model()
 
-    model, scaler = load_artifacts()
+# =====================================
+# TITLE
+# =====================================
 
-except Exception as e:
+st.title(
+    "⚡ Electricity Consumption Forecasting"
+)
 
-    st.error(
-        f"Error loading model: {e}"
-    )
-
-    st.stop()
-
-# ==========================================
-# HEADER
-# ==========================================
-
-st.markdown("""
-<h1 style='text-align:center;color:#2563eb;'>
-⚡ Electricity Consumption Forecasting System
-</h1>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<h4 style='text-align:center;color:gray;'>
-SimpleRNN-Based Energy Demand Prediction Platform
-</h4>
-""", unsafe_allow_html=True)
+st.markdown(
+    "### SimpleRNN-Based Energy Forecasting Dashboard"
+)
 
 st.divider()
 
-# ==========================================
-# SIDEBAR
-# ==========================================
+# =====================================
+# INPUTS
+# =====================================
 
 st.sidebar.header(
-    "📊 Previous 24 Hours Consumption"
+    "Last 24 Hours Consumption"
 )
 
-st.sidebar.caption(
-    "Enter electricity usage for the last 24 hours"
-)
-
-hourly_values = []
+values = []
 
 for i in range(24):
 
     value = st.sidebar.number_input(
         f"Hour {i+1}",
         min_value=0.0,
-        value=1000.0,
-        step=10.0
+        value=1000.0
     )
 
-    hourly_values.append(value)
+    values.append(value)
 
-# ==========================================
-# FORECAST BUTTON
-# ==========================================
+# =====================================
+# PREDICT
+# =====================================
 
 if st.button(
-    "🚀 Forecast Next Hour",
-    use_container_width=True
+    "🚀 Forecast Next Hour"
 ):
 
-    try:
+    data = np.array(
+        values
+    ).reshape(-1,1)
 
-        values = np.array(
-            hourly_values
-        ).reshape(-1,1)
+    scaled = scaler.transform(
+        data
+    )
 
-        scaled_values = scaler.transform(
-            values
+    X = scaled.reshape(
+        1,
+        24,
+        1
+    )
+
+    pred = model.predict(
+        X,
+        verbose=0
+    )
+
+    next_hour = scaler.inverse_transform(
+        pred
+    )[0][0]
+
+    current = values[-1]
+
+    change = next_hour - current
+
+    change_pct = (
+        change/current
+    ) * 100
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+
+        st.metric(
+            "Current Usage",
+            f"{current:.2f}"
         )
 
-        X = scaled_values.reshape(
-            1,
-            24,
-            1
+    with c2:
+
+        st.metric(
+            "Forecast Usage",
+            f"{next_hour:.2f}"
         )
 
-        prediction = model.predict(
-            X,
-            verbose=0
+    with c3:
+
+        st.metric(
+            "% Change",
+            f"{change_pct:.2f}%"
         )
 
-        next_hour = scaler.inverse_transform(
-            prediction
-        )[0][0]
+    st.divider()
 
-        current = hourly_values[-1]
-
-        change = (
-            next_hour - current
-        )
-
-        percent_change = (
-            change / current
-        ) * 100
-
-        # ==================================
-        # KPI DASHBOARD
-        # ==================================
-
-        st.subheader(
-            "📈 Energy Forecast Dashboard"
-        )
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        with c1:
-
-            st.metric(
-                "Current Usage",
-                f"{current:.0f}"
-            )
-
-        with c2:
-
-            st.metric(
-                "Forecast Usage",
-                f"{next_hour:.0f}"
-            )
-
-        with c3:
-
-            st.metric(
-                "Change",
-                f"{change:.0f}"
-            )
-
-        with c4:
-
-            st.metric(
-                "% Change",
-                f"{percent_change:.2f}%"
-            )
-
-        st.divider()
-
-        # ==================================
-        # ALERTS
-        # ==================================
-
-        if percent_change > 10:
-
-            st.error(
-                "🔥 Peak Consumption Expected"
-            )
-
-        elif percent_change > 5:
-
-            st.warning(
-                "⚠ Increased Demand Forecast"
-            )
-
-        else:
-
-            st.success(
-                "✅ Stable Energy Demand"
-            )
-
-        # ==================================
-        # FORECAST CHART
-        # ==================================
-
-        chart_data = hourly_values.copy()
-
-        chart_data.append(
-            next_hour
-        )
-
-        fig = plt.figure(
-            figsize=(12,5)
-        )
-
-        plt.plot(
-            range(1,26),
-            chart_data,
-            marker="o"
-        )
-
-        plt.title(
-            "Energy Consumption Forecast"
-        )
-
-        plt.xlabel(
-            "Hour"
-        )
-
-        plt.ylabel(
-            "Consumption"
-        )
-
-        plt.grid(True)
-
-        st.pyplot(fig)
-
-        # ==================================
-        # ANALYTICS
-        # ==================================
-
-        st.subheader(
-            "📊 Consumption Analytics"
-        )
-
-        a1, a2, a3, a4 = st.columns(4)
-
-        with a1:
-
-            st.info(
-                f"Average: {np.mean(hourly_values):.2f}"
-            )
-
-        with a2:
-
-            st.info(
-                f"Maximum: {np.max(hourly_values):.2f}"
-            )
-
-        with a3:
-
-            st.info(
-                f"Minimum: {np.min(hourly_values):.2f}"
-            )
-
-        with a4:
-
-            peak_hour = (
-                np.argmax(hourly_values) + 1
-            )
-
-            st.info(
-                f"Peak Hour: {peak_hour}"
-            )
-
-        # ==================================
-        # DEMAND CATEGORY
-        # ==================================
-
-        st.subheader(
-            "⚡ Demand Assessment"
-        )
-
-        avg_usage = np.mean(
-            hourly_values
-        )
-
-        if avg_usage > 5000:
-
-            st.error(
-                "High Consumption Zone"
-            )
-
-        elif avg_usage > 2500:
-
-            st.warning(
-                "Moderate Consumption Zone"
-            )
-
-        else:
-
-            st.success(
-                "Low Consumption Zone"
-            )
-
-        # ==================================
-        # AI INSIGHTS
-        # ==================================
-
-        st.subheader(
-            "🤖 AI Insights"
-        )
-
-        insights = []
-
-        if percent_change > 10:
-
-            insights.append(
-                "Potential peak demand period approaching."
-            )
-
-        if peak_hour >= 18:
-
-            insights.append(
-                "Evening demand spike detected."
-            )
-
-        if avg_usage > 3000:
-
-            insights.append(
-                "Overall consumption is above normal."
-            )
-
-        if len(insights) == 0:
-
-            insights.append(
-                "Energy demand appears stable."
-            )
-
-        for item in insights:
-
-            st.info(item)
-
-    except Exception as e:
+    if change_pct > 10:
 
         st.error(
-            f"Prediction Error: {e}"
+            "🔥 Peak Demand Expected"
         )
 
-# ==========================================
-# INFO SECTION
-# ==========================================
+    elif change_pct > 5:
 
-st.divider()
+        st.warning(
+            "⚠ Increased Demand"
+        )
 
-st.subheader(
-    "🏭 Project Information"
-)
+    else:
 
-st.write("""
-**Model:** SimpleRNN
+        st.success(
+            "✅ Stable Demand"
+        )
 
-**Input:** Previous 24 Hours Electricity Consumption
+    chart_data = values.copy()
 
-**Output:** Next Hour Forecast
+    chart_data.append(
+        next_hour
+    )
 
-**Applications:**
-- Smart Grid Monitoring
-- Energy Demand Forecasting
-- Peak Load Management
-- Utility Planning
-- Power Distribution Optimization
-""")
+    fig = plt.figure(
+        figsize=(10,4)
+    )
 
-# ==========================================
-# FOOTER
-# ==========================================
+    plt.plot(
+        range(1,26),
+        chart_data,
+        marker="o"
+    )
+
+    plt.title(
+        "Electricity Forecast"
+    )
+
+    plt.xlabel(
+        "Hour"
+    )
+
+    plt.ylabel(
+        "Consumption"
+    )
+
+    plt.grid(True)
+
+    st.pyplot(fig)
+
+    st.subheader(
+        "📊 Analytics"
+    )
+
+    a1, a2, a3 = st.columns(3)
+
+    with a1:
+
+        st.info(
+            f"Average: {np.mean(values):.2f}"
+        )
+
+    with a2:
+
+        st.info(
+            f"Maximum: {np.max(values):.2f}"
+        )
+
+    with a3:
+
+        st.info(
+            f"Minimum: {np.min(values):.2f}"
+        )
 
 st.markdown("---")
 
 st.caption(
-    "⚡ Electricity Consumption Forecasting | Deep Learning SimpleRNN Model"
+    "⚡ Electricity Consumption Forecasting | SimpleRNN"
 )
