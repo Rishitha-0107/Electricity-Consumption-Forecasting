@@ -45,7 +45,7 @@ def load_artifacts():
     model = tf.keras.models.load_model(
         os.path.join(
             BASE_DIR,
-            "energy_rnn_model.h5"
+            "energy_rnn_model.keras"
         ),
         compile=False
     )
